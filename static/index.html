@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TCC Flow Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.22.9/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+  <div id="root" class="container mx-auto p-4"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const { createRoot } = ReactDOM;
+
+    const App = () => {
+      const sections = [
+        {
+          label: 'Flow Configuration',
+          fields: [
+            {
+              name: 'script',
+              label: 'Script Type',
+              type: 'select',
+              options: ['sheeva', 'aivail'],
+              default: 'sheeva',
+              required: true
+            },
+            {
+              name: 'input_data',
+              label: 'Input Data',
+              type: 'text',
+              placeholder: 'e.g., test',
+              default: 'test',
+              required: true
+            },
+            {
+              name: 'arbitrary_input',
+              label: 'Arbitrary Input (Reverse)',
+              type: 'text',
+              placeholder: 'e.g., arbitrary text',
+              default: ''
+            },
+            {
+              name: 'target_output',
+              label: 'Target Output (Reverse, hex)',
+              type: 'text',
+              placeholder: 'e.g., hex string',
+              default: ''
+            }
+          ]
+        },
+        {
+          label: 'Keys',
+          fields: [
+            {
+              name: 'aes_key',
+              label: 'AES Key (32 hex chars)',
+              type: 'text',
+              placeholder: 'e.g., 00112233445566778899aabbccddeeff',
+              default: '00112233445566778899aabbccddeeff',
+              required: true
+            },
+            {
+              name: 'ed25519_key',
+              label: 'Ed25519 Private Key (64 hex chars)',
+              type: 'text',
+              placeholder: 'e.g., 1122334455667788990011223344556677889900112233445566778899001122',
+              default: '1122334455667788990011223344556677889900112233445566778899001122',
+              required: true
+            }
+          ]
+        },
+        {
+          label: 'Flow Options',
+          fields: [
+            {
+              name: 'include_keccak',
+              label: 'Include Keccak in Flow',
+              type: 'checkbox',
+              default: false
+            },
+            {
+              name: 'model_name',
+              label: 'Model Name (Aivail)',
+              type: 'text',
+              placeholder: 'e.g., distilgpt2',
+              default: 'distilgpt2'
+            },
+            {
+              name: 'num_layers',
+              label: 'Number of Layers (Aivail)',
+              type: 'number',
+              min: 1,
+              default: 2
+            }
+          ]
+        },
+        {
+          label: 'Entropy Operations',
+          fields: [
+            {
+              name: 'commit_entropy',
+              label: 'Commit Entropy (hex)',
+              type: 'text',
+              placeholder: 'e.g., 64-char hex',
+              default: ''
+            },
+            {
+              name: 'reveal_entropy',
+              label: 'Reveal Entropy (hex)',
+              type: 'text',
+              placeholder: 'e.g., 64-char hex',
+              default: ''
+            },
+            {
+              name: 'commit_sampling',
+              label: 'Commit Sampling (seed:temp)',
+              type: 'text',
+              placeholder: 'e.g., 42:0.7',
+              default: ''
+            },
+            {
+              name: 'reveal_sampling',
+              label: 'Reveal Sampling (seed:temp)',
+              type: 'text',
+              placeholder: 'e.g., 42:0.7',
+              default: ''
+            },
+            {
+              name: 'user_id',
+              label: 'User ID',
+              type: 'text',
+              placeholder: 'e.g., user1',
+              default: 'user1'
+            },
+            {
+              name: 'fee',
+              label: 'Fee',
+              type: 'number',
+              min: 1000,
+              default: 1000
+            }
+          ]
+        },
+        {
+          label: 'Advanced',
+          fields: [
+            {
+              name: 'deploy_shard',
+              label: 'Deploy Storage Shard',
+              type: 'checkbox',
+              default: false
+            },
+            {
+              name: 'log_file',
+              label: 'Log File Path',
+              type: 'select',
+              options: ['tcc_flow_log.jsonl', 'llm_flow_log.jsonl'],
+              default: 'tcc_flow_log.jsonl'
+            }
+          ]
+        },
+        {
+          label: 'Actions',
+          fields: [
+            { name: 'execute_flow', label: 'Execute Flow', type: 'button' },
+            { name: 'reverse_flow', label: 'Reverse Flow', type: 'button' },
+            { name: 'reverse_arbitrary', label: 'Reverse Arbitrary', type: 'button' },
+            { name: 'commit_entropy_action', label: 'Commit Entropy', type: 'button' },
+            { name: 'reveal_entropy_action', label: 'Reveal Entropy', type: 'button' },
+            { name: 'deploy_shard_action', label: 'Deploy Shard', type: 'button' }
+          ]
+        },
+        {
+          label: 'Output',
+          fields: [
+            { name: 'output', label: 'Output', type: 'textarea', readonly: true },
+            { name: 'log', label: 'Execution Log', type: 'textarea', readonly: true }
+          ]
+        }
+      ];
+
+      const initialFormData = sections
+        .flatMap(section => section.fields)
+        .reduce((acc, field) => ({
+          ...acc,
+          [field.name]: field.default !== undefined
+            ? field.default
+            : field.type === 'checkbox' ? false : field.type === 'number' ? 0 : ''
+        }), {});
+
+      const [formData, setFormData] = useState(initialFormData);
+      const [logs, setLogs] = useState([]);
+      const [output, setOutput] = useState('');
+      const [message, setMessage] = useState('');
+      const [isSuccess, setIsSuccess] = useState(false);
+      const chartRef = useRef(null);
+
+      const validateHex = (value, length) => /^[0-9a-fA-F]+$/.test(value) && value.length === length;
+
+      const handleInputChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        setFormData({
+          ...formData,
+          [name]: type === 'checkbox' ? checked : type === 'number' ? Number(value) : value
+        });
+      };
+
+      const handleAction = async (action) => {
+        setMessage('');
+        setIsSuccess(false);
+        setOutput('');
+
+        let endpoint;
+        let payload = {};
+
+        switch (action) {
+          case 'execute_flow':
+            endpoint = 'http://localhost:8000/execute';
+            if (!formData.script) {
+              setMessage('Error: Script type is required');
+              return;
+            }
+            if (!formData.input_data) {
+              setMessage('Error: Input Data is required');
+              return;
+            }
+            if (formData.script === 'sheeva') {
+              if (!formData.aes_key || !validateHex(formData.aes_key, 32)) {
+                setMessage('Error: AES Key must be 32 hex characters');
+                return;
+              }
+              if (!formData.ed25519_key || !validateHex(formData.ed25519_key, 64)) {
+                setMessage('Error: Ed25519 Key must be 64 hex characters');
+                return;
+              }
+            }
+            payload = {
+              script: formData.script,
+              input_data: formData.input_data,
+              aes_key: formData.aes_key,
+              ed25519_key: formData.ed25519_key,
+              user_id: formData.user_id,
+              fee: formData.fee,
+              include_keccak: formData.include_keccak,
+              deploy_shard: formData.deploy_shard,
+              model_name: formData.model_name,
+              num_layers: formData.num_layers,
+              commit_sampling: formData.commit_sampling,
+              reveal_sampling: formData.reveal_sampling
+            };
+            if (formData.arbitrary_input) payload.arbitrary_input = formData.arbitrary_input;
+            if (formData.target_output) payload.target_output = formData.target_output;
+            if (formData.commit_entropy) payload.commit_entropy = formData.commit_entropy;
+            if (formData.reveal_entropy) payload.reveal_entropy = formData.reveal_entropy;
+            break;
+          case 'reverse_flow':
+            endpoint = 'http://localhost:8000/reverse';
+            if (!formData.script) {
+              setMessage('Error: Script type is required');
+              return;
+            }
+            if (!formData.target_output) {
+              setMessage('Error: Target Output is required for Reverse Flow');
+              return;
+            }
+            if (formData.script === 'sheeva' && (!formData.aes_key || !formData.ed25519_key)) {
+              setMessage('Error: AES and Ed25519 keys are required for Sheeva');
+              return;
+            }
+            payload = {
+              script: formData.script,
+              target_output: formData.target_output,
+              aes_key: formData.aes_key,
+              ed25519_key: formData.ed25519_key,
+              model_name: formData.model_name,
+              num_layers: formData.num_layers
+            };
+            break;
+          case 'reverse_arbitrary':
+            endpoint = 'http://localhost:8000/reverse_arbitrary';
+            if (!formData.script) {
+              setMessage('Error: Script type is required');
+              return;
+            }
+            if (!formData.target_output || !formData.arbitrary_input) {
+              setMessage('Error: Target Output and Arbitrary Input are required for Reverse Arbitrary');
+              return;
+            }
+            payload = {
+              script: formData.script,
+              target_output: formData.target_output,
+              arbitrary_input: formData.arbitrary_input,
+              model_name: formData.model_name,
+              num_layers: formData.num_layers
+            };
+            break;
+          case 'commit_entropy_action':
+            endpoint = 'http://localhost:8000/commit_entropy';
+            if (!formData.script) {
+              setMessage('Error: Script type is required');
+              return;
+            }
+            if (!formData.commit_entropy) {
+              setMessage('Error: Commit Entropy is required');
+              return;
+            }
+            payload = {
+              script: formData.script,
+              commit_entropy: formData.commit_entropy,
+              user_id: formData.user_id
+            };
+            break;
+          case 'reveal_entropy_action':
+            endpoint = 'http://localhost:8000/reveal_entropy';
+            if (!formData.script) {
+              setMessage('Error: Script type is required');
+              return;
+            }
+            if (!formData.reveal_entropy) {
+              setMessage('Error: Reveal Entropy is required');
+              return;
+            }
+            payload = {
+              script: formData.script,
+              reveal_entropy: formData.reveal_entropy,
+              user_id: formData.user_id,
+              fee: formData.fee
+            };
+            break;
+          case 'deploy_shard_action':
+            endpoint = 'http://localhost:8000/deploy_shard';
+            if (!formData.script) {
+              setMessage('Error: Script type is required');
+              return;
+            }
+            payload = {
+              script: formData.script,
+              user_id: formData.user_id
+            };
+            break;
+          default:
+            return;
+        }
+
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await response.json();
+          if (response.ok) {
+            setMessage('Operation successful!');
+            setIsSuccess(true);
+            setOutput(data.output || JSON.stringify(data, null, 2));
+            fetchLogs();
+          } else {
+            const errorMsg = data.detail
+              ? Array.isArray(data.detail)
+                ? data.detail.map(err => `${err.loc?.join('.')}: ${err.msg}`).join('; ')
+                : data.detail
+              : data.message || 'Unknown error';
+            setMessage(`Error: ${errorMsg}`);
+            setOutput(JSON.stringify(data, null, 2));
+          }
+        } catch (error) {
+          setMessage(`Network error: ${error.message}`);
+          setOutput(`Error: ${error.message}`);
+        }
+      };
+
+      const fetchLogs = async () => {
+        try {
+          const response = await fetch(`http://localhost:8000/logs/${formData.log_file}`);
+          const data = await response.json();
+          setLogs(data.logs || []);
+        } catch (error) {
+          setMessage(`Error fetching logs: ${error.message}`);
+        }
+      };
+
+      const renderChart = () => {
+        const ctx = document.getElementById('executionChart')?.getContext('2d');
+        if (!ctx) return;
+        if (chartRef.current) {
+          chartRef.current.destroy();
+        }
+        const times = logs.map(log => log.execution_time_ns / 1e6);
+        const labels = logs.map(log => log.operation);
+        chartRef.current = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Execution Time (ms)',
+              data: times,
+              backgroundColor: 'rgba(75, 192, 192, 0.5)',
+              borderColor: 'rgba(75, 192, 192, 1)',
+              borderWidth: 1
+            }]
+          },
+          options: {
+            scales: { y: { beginAtZero: true } },
+            responsive: true,
+            maintainAspectRatio: false
+          }
+        });
+      };
+
+      useEffect(() => {
+        fetchLogs();
+      }, [formData.log_file]);
+
+      useEffect(() => {
+        if (logs.length > 0) {
+          renderChart();
+        }
+      }, [logs]);
+
+      return (
+        <div className="max-w-5xl mx-auto">
+          <h1 className="text-3xl font-bold mb-6 text-center text-indigo-600">TCC Flow Dashboard</h1>
+          {sections.map((section, index) => (
+            <div key={index} className="bg-white p-6 rounded-lg shadow-md mb-6">
+              <h2 className="text-xl font-semibold mb-4 text-gray-800">{section.label}</h2>
+              {section.label === 'Actions' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {section.fields.map(field => (
+                    <button
+                      key={field.name}
+                      onClick={() => handleAction(field.name)}
+                      className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition-colors"
+                    >
+                      {field.label}
+                    </button>
+                  ))}
+                </div>
+              ) : section.label === 'Output' ? (
+                <div className="space-y-4">
+                  {section.fields.map(field => (
+                    <div key={field.name}>
+                      <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+                      <textarea
+                        name={field.name}
+                        value={
+                          field.name === 'output'
+                            ? output
+                            : logs.map(log => `${new Date(log.timestamp).toLocaleString()}: ${log.operation} (${(log.execution_time_ns / 1e6).toFixed(2)}ms)`).join('\n')
+                        }
+                        readOnly
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm h-48 resize-y focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {section.fields.map(field => (
+                    <div key={field.name}>
+                      <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+                      {field.type === 'checkbox' ? (
+                        <input
+                          type="checkbox"
+                          name={field.name}
+                          checked={formData[field.name]}
+                          onChange={handleInputChange}
+                          className="mt-1 h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                        />
+                      ) : field.type === 'select' ? (
+                        <select
+                          name={field.name}
+                          value={formData[field.name]}
+                          onChange={handleInputChange}
+                          required={field.required}
+                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                        >
+                          {field.options.map(option => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type}
+                          name={field.name}
+                          value={formData[field.name]}
+                          onChange={handleInputChange}
+                          placeholder={field.placeholder}
+                          required={field.required}
+                          min={field.min}
+                          className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {message && (
+            <div
+              className={`p-4 rounded-md ${isSuccess ? 'bg-green-100 text-green-700 animate-pulse' : 'bg-red-100 text-red-700'}`}
+            >
+              {message}
+            </div>
+          )}
+          <div className="bg-white p-6 rounded-lg shadow-md mt-6">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800">Execution Time Chart</h2>
+            <div className="h-64">
+              <canvas id="executionChart"></canvas>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+
+  <div class="container mx-auto p-6 max-w-4xl">
+    <section class="mb-8">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-700">Execute a Flow</h2>
+      <p class="mb-2 text-gray-600">Runs the TCCFlow with SHA256, Ed25519, and AES (optionally Keccak).</p>
+      <p class="mb-2 text-gray-600"><strong>Example:</strong> Process the input <code>Hello, world!</code> and save logs to <code>tcc_flow_log.jsonl</code>.</p>
+      <pre class="bg-gray-800 text-white p-4 rounded-lg text-sm overflow-x-auto"><code>
+python tcc_explorer.py \
+  --aes-key 00112233445566778899aabbccddeeff \
+  --ed25519-key 1122334455667788990011223344556677889900112233445566778899001122 \
+  --input "Hello, world!" \
+  --log-file tcc_flow_log.jsonl
+      </code></pre>
+      <p class="mb-2 text-gray-600"><strong>Output:</strong> Shows the input, output, reconstructed input, and reverse success status in JSON format.</p>
+      <p class="mb-2 text-gray-600">Add <code>--include-keccak</code> to include Keccak in the flow:</p>
+      <pre class="bg-gray-800 text-white p-4 rounded-lg text-sm overflow-x-auto"><code>
+python tcc_explorer.py \
+  --aes-key 00112233445566778899aabbccddeeff \
+  --ed25519-key 1122334455667788990011223344556677889900112233445566778899001122 \
+  --input "Hello, world!" \
+  --include-keccak \
+  --log-file tcc_flow_log.jsonl
+      </code></pre>
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-700">Commit Entropy</h2>
+      <p class="mb-2 text-gray-600">Commits a 32-byte entropy hash to three TCCKeccakEngine instances for a user.</p>
+      <p class="mb-2 text-gray-600"><strong>Example:</strong> Commit entropy for user <code>alice</code>.</p>
+      <pre class="bg-gray-800 text-white p-4 rounded-lg text-sm overflow-x-auto"><code>
+python tcc_explorer.py \
+  --aes-key 00112233445566778899aabbccddeeff \
+  --ed25519-key 1122334455667788990011223344556677889900112233445566778899001122 \
+  --commit-entropy a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2 \
+  --user-id alice
+      </code></pre>
+      <p class="mb-2 text-gray-600"><strong>Output:</strong> Confirms the commitment with the entropy hash.</p>
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-700">Reveal Entropy</h2>
+      <p class="mb-2 text-gray-600">Reveals previously committed entropy, feeding it into the Keccak sponge.</p>
+      <p class="mb-2 text-gray-600">Requires a sufficient fee (default: 1000 per engine).</p>
+      <p class="mb-2 text-gray-600"><strong>Example:</strong> Reveal entropy for user <code>alice</code>.</p>
+      <pre class="bg-gray-800 text-white p-4 rounded-lg text-sm overflow-x-auto"><code>
+python tcc_explorer.py \
+  --aes-key 00112233445566778899aabbccddeeff \
+  --ed25519-key 1122334455667788990011223344556677889900112233445566778899001122 \
+  --reveal-entropy a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2 \
+  --user-id alice \
+  --fee 3000
+      </code></pre>
+      <p class="mb-2 text-gray-600"><strong>Output:</strong> Confirms the reveal and shows the combined entropy hash from all engines.</p>
+      <p class="mb-2 text-gray-600"><strong>Note:</strong> The entropy must match the SHA256 hash of the committed value, and the commitment must not be expired (24 hours).</p>
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-700">Deploy a Storage Shard</h2>
+      <p class="mb-2 text-gray-600">Deploys a StorageShard for storing data chunks during entropy feeding.</p>
+      <p class="mb-2 text-gray-600"><strong>Example:</strong> Deploy a shard for user <code>alice</code>.</p>
+      <pre class="bg-gray-800 text-white p-4 rounded-lg text-sm overflow-x-auto"><code>
+python tcc_explorer.py \
+  --aes-key 00112233445566778899aabbccddeeff \
+  --ed25519-key 1122334455667788990011223344556677889900112233445566778899001122 \
+  --deploy-shard \
+  --user-id alice
+      </code></pre>
+      <p class="mb-2 text-gray-600"><strong>Output:</strong> Confirms the shard deployment with its ID.</p>
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-700">Reverse Arbitrary Flow</h2>
+      <p class="mb-2 text-gray-600">Reverses a flow to reconstruct an input given a target output and arbitrary input.</p>
+      <p class="mb-2 text-gray-600"><strong>Example:</strong> Reverse with arbitrary input <code>test_input</code> and target output (hex).</p>
+      <pre class="bg-gray-800 text-white p-4 rounded-lg text-sm overflow-x-auto"><code>
+python tcc_explorer.py \
+  --aes-key 00112233445566778899aabbccddeeff \
+  --ed25519-key 1122334455667788990011223344556677889900112233445566778899001122 \
+  --input "Hello, world!" \
+  --arbitrary-input "test_input" \
+  --target-output &lt;TARGET_OUTPUT_HEX&gt; \
+  --log-file tcc_flow_log.jsonl
+      </code></pre>
+      <p class="mb-2 text-gray-600">Replace <code>&lt;TARGET_OUTPUT_HEX&gt;</code> with a valid hex string from a prior flow execution.</p>
+      <p class="mb-2 text-gray-600"><strong>Output:</strong> Shows the reconstructed arbitrary input.</p>
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-700">Interpreting Outputs</h2>
+      <h3 class="text-xl font-medium mb-2 text-gray-700">Console Output</h3>
+      <p class="mb-2 text-gray-600">For flow execution: Displays input, output, reconstructed input, and reverse success in JSON.</p>
+      <p class="mb-2 text-gray-600">For entropy operations: Shows confirmation messages and hashes.</p>
+      <p class="mb-2 text-gray-600">For shard deployment: Shows the shard ID.</p>
+      <p class="mb-2 text-gray-600">Errors are printed in JSON format (e.g., <code>{"error": "Invalid commitment"}</code>).</p>
+      <h3 class="text-xl font-medium mb-2 text-gray-700">Log File</h3>
+      <p class="mb-2 text-gray-600">Saved to the specified <code>--log-file</code> (e.g., <code>tcc_flow_log.jsonl</code>).</p>
+      <p class="mb-2 text-gray-600">Each line is a JSON object with fields like <code>step</code>, <code>operation</code>, <code>input_data</code>, <code>output_data</code>, <code>metadata</code>, <code>timestamp</code>, and <code>execution_time_ns</code>.</p>
+      <p class="mb-2 text-gray-600"><strong>Example log entry:</strong></p>
+      <pre class="bg-gray-800 text-white p-4 rounded-lg text-sm overflow-x-auto"><code>
+{
+  "step": 0,
+  "operation": "flow_hash_sha256",
+  "input_data": "SGVsbG8sIHdvcmxkIQ==",
+  "output_data": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
+  "metadata": {"step_index": 0, "step_name": "hash_sha256", "params": {}, "input_length": 13, "output_length": 32},
+  "log_level": "INFO",
+  "error_code": "NONE",
+  "prev_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "operation_id": "e8f9a1b2c3d4e5f67890abcdef123456",
+  "timestamp": 1730934567890123456,
+  "execution_time_ns": 123456
+}
+      </code></pre>
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-700">Verifying Results</h2>
+      <h3 class="text-xl font-medium mb-2 text-gray-700">Check Logs</h3>
+      <p class="mb-2 text-gray-600">Open the log file (e.g., <code>tcc_flow_log.jsonl</code>) to verify operations.</p>
+      <p class="mb-2 text-gray-600">Look for operation fields like <code>entropy_committed</code>, <code>entropy_revealed</code>, <code>flow_complete</code>, or <code>shard_deployed</code>.</p>
+      <p class="mb-2 text-gray-600">Verify <code>prev_hash</code> links to ensure log integrity (each entry’s <code>prev_hash</code> matches the SHA256 of the previous entry).</p>
+      <h3 class="text-xl font-medium mb-2 text-gray-700">Validate Entropy</h3>
+      <p class="mb-2 text-gray-600">For a revealed entropy, compute its SHA256 hash and compare it to the committed value in the logs (<code>commitment_hash</code> in entropy_committed metadata).</p>
+    </section>
+  </div>
+</body>
+</html>
